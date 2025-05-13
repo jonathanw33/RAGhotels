@@ -3,7 +3,7 @@
 
 """
 Enhanced RAG Engine with Advanced Search Features for the Hotel Recommendation System.
-"""
+Fixed"""
 
 import os
 import logging
@@ -14,6 +14,7 @@ from chromadb.utils import embedding_functions
 from typing import List, Dict, Any, Tuple, Optional, Union
 import numpy as np
 import pandas as pd
+from llama_index.core.indices.vector_store.base import VectorStoreIndex # Correct import
 from llama_index.core import VectorStoreIndex, ServiceContext, StorageContext
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -23,7 +24,7 @@ from llama_index.core import set_global_service_context
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.core.retrievers import VectorIndexRetriever
-from llama_index.core.retrievers.bm25 import BM25Retriever
+from llama_index.retrievers.bm25 import BM25Retriever
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
@@ -226,21 +227,6 @@ class QueryExpander:
         
         # Remove duplicates and return
         return list(set(expanded_queries))
-
-class HybridRetriever(BaseRetriever):
-    """Custom retriever that combines vector search, BM25, and metadata filtering."""
-    
-    def __init__(
-        self, 
-        vector_retriever: VectorIndexRetriever,
-        bm25_retriever: BM25Retriever,
-        chroma_collection: Any,
-        similarity_top_k: int = 10,
-        bm25_top_k: int = 10,
-        rerank_top_k: int = 15
-    ):
-        """Initialize the hybrid retriever."""
-        self.vector_retriever = vector_retriever
         self.bm25_retriever = bm25_retriever
         self.chroma_collection = chroma_collection
         self.similarity_top_k = similarity_top_k
