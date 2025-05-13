@@ -648,7 +648,7 @@ class AdvancedHotelRecommendationUI:
             
             # Advanced filtering panel
             with gr.Accordion("Advanced Filtering", open=False):
-                with gr.Box(elem_classes=["filter-panel"]):
+                with gr.Group(elem_classes=["filter-panel"]):
                     gr.Markdown("## 🔍 Filter Your Results", elem_classes=["filter-title"])
                     
                     with gr.Row():

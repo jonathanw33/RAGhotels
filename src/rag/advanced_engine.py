@@ -15,12 +15,11 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 import numpy as np
 import pandas as pd
 from llama_index.core.indices.vector_store.base import VectorStoreIndex # Correct import
-from llama_index.core import VectorStoreIndex, ServiceContext, StorageContext
+from llama_index.core import VectorStoreIndex, Settings, StorageContext
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 from llama_index.core.prompts import PromptTemplate
-from llama_index.core import set_global_service_context
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.core.retrievers import VectorIndexRetriever
@@ -457,15 +456,11 @@ class AdvancedRAGEngine:
         logger.info(f"Using LLM model: {self.llm_model}")
         llm = Ollama(model=self.llm_model, request_timeout=180.0)
         
-        # Create the service context
-        service_context = ServiceContext.from_defaults(
-            llm=llm,
-            embed_model=embed_model,
-            system_prompt=SYSTEM_PROMPT
-        )
-        
-        # Set the global service context
-        set_global_service_context(service_context)
+        # Configure settings instead of ServiceContext
+        from llama_index.core import Settings
+        Settings.llm = llm
+        Settings.embed_model = embed_model
+        Settings.system_prompt = SYSTEM_PROMPT
         
         # Set up ChromaDB client
         client = chromadb.PersistentClient(path=self.chroma_db_dir)
@@ -475,10 +470,9 @@ class AdvancedRAGEngine:
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
         
-        # Create the index
+        # Create the index using Settings instead of service_context
         self.index = VectorStoreIndex.from_vector_store(
             vector_store=vector_store,
-            service_context=service_context,
         )
         
         # Set up the vector retriever
@@ -487,15 +481,33 @@ class AdvancedRAGEngine:
             similarity_top_k=15,
         )
         
-        # Set up the BM25 retriever
-        # Note: This requires the documents to be loaded
-        # For simplicity, we'll use a basic implementation
-        bm25_retriever = BM25Retriever.from_defaults(
-            docstore=self.index.docstore,
-            similarity_top_k=15,
-        )
+        # Set up the BM25 retriever with safeguards for empty corpus
+        try:
+            bm25_retriever = BM25Retriever.from_defaults(
+                docstore=self.index.docstore,
+                similarity_top_k=15,
+            )
+            # Test if the retriever has a valid corpus
+            if hasattr(bm25_retriever, 'corpus') and not bm25_retriever.corpus:
+                logger.warning("BM25 corpus is empty, falling back to vector retriever only")
+                self.hybrid_retriever = None
+                self.query_engine = self.index.as_query_engine(
+                    text_qa_template=PromptTemplate(QUERY_PROMPT_TEMPLATE),
+                    similarity_top_k=15,
+                )
+                return
+        except Exception as e:
+            logger.warning(f"Error initializing BM25Retriever: {str(e)}, falling back to vector retriever only")
+            self.hybrid_retriever = None
+            self.query_engine = self.index.as_query_engine(
+                text_qa_template=PromptTemplate(QUERY_PROMPT_TEMPLATE),
+                similarity_top_k=15,
+            )
+            return
         
-        # Create the hybrid retriever
+        # Create the hybrid retriever if BM25 initialization was successful
+        
+        # Create the hybrid retriever if BM25 initialization was successful
         self.hybrid_retriever = HybridRetriever(
             vector_retriever=vector_retriever,
             bm25_retriever=bm25_retriever,
@@ -522,7 +534,15 @@ class AdvancedRAGEngine:
         """Run an enhanced query against the RAG engine with optional explicit filters."""
         logger.info(f"Running query: {user_query}")
         
-        if use_query_expansion:
+        # If the hybrid retriever is None (fallback mode), use the regular query engine
+        if self.hybrid_retriever is None:
+            logger.info("Using vector retriever only (hybrid retrieval not available)")
+            response = self.query_engine.query(user_query)
+            source_nodes = response.source_nodes
+            
+            # Skip the query expansion since we're in fallback mode
+            expanded_queries = [user_query]
+        elif use_query_expansion:
             # Expand the query
             expanded_queries = self.expand_query(user_query)
             logger.info(f"Expanded queries: {expanded_queries}")
@@ -563,6 +583,7 @@ class AdvancedRAGEngine:
             # Use only the original query
             response = self.query_engine.query(user_query)
             source_nodes = response.source_nodes
+            expanded_queries = [user_query]
         
         # Extract hotel information from the source nodes
         hotels_info = []
