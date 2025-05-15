@@ -8,8 +8,8 @@ Main entry point for the Hotel Recommendation RAG System.
 import os
 import logging
 import argparse
+import importlib.util
 from src.ui.app import create_app
-from src.rag.advanced_engine import AdvancedRAGEngine
 
 # Setup logging
 logging.basicConfig(
@@ -24,6 +24,8 @@ def main():
     parser = argparse.ArgumentParser(description='Hotel Recommendation RAG System')
     parser.add_argument('--data-format', choices=['csv', 'json'], default='json',
                         help='Format of the raw data files (csv or json)')
+    parser.add_argument('--use-debug', action='store_true',
+                        help='Use the enhanced debugging RAG engine')
     args = parser.parse_args()
     
     logger.info(f"Starting Hotel Recommendation RAG System with {args.data_format.upper()} data format...")
@@ -46,6 +48,20 @@ def main():
     # Initialize enhanced RAG engine
     logger.info("Initializing Advanced RAG engine...")
     try:
+        # Choose which engine to use based on debug flag
+        if args.use_debug:
+            logger.info("Using enhanced debugging RAG engine")
+            try:
+                # Import the debug engine
+                from src.rag.advanced_engine_debug import AdvancedRAGEngine
+                logger.info("Debug engine imported successfully")
+            except ImportError:
+                logger.warning("Debug engine not found, falling back to standard engine")
+                from src.rag.advanced_engine import AdvancedRAGEngine
+        else:
+            # Standard engine
+            from src.rag.advanced_engine import AdvancedRAGEngine
+        
         rag_engine = AdvancedRAGEngine()
         
         # Start the Gradio app

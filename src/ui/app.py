@@ -533,6 +533,21 @@ class AdvancedHotelRecommendationUI:
         """
         return html
     
+    def enhance_response_message(self, response_text, hotels):
+        """Add additional guidance if the response doesn't include hotel recommendations."""
+        if not hotels or len(hotels) == 0:
+            guidance = "\n\n**No matching hotels found**. Try adjusting your search criteria with:"
+            guidance += "\n- Different location (only US cities are supported)"
+            guidance += "\n- Fewer specific requirements"
+            guidance += "\n- Different amenities or features"
+            guidance += "\n\nSupported locations include: New York, Chicago, Los Angeles, Miami, Las Vegas, Houston, etc."
+            
+            # Check if response already includes similar guidance
+            if "I couldn't find any hotels" not in response_text and "I don't have information" not in response_text:
+                response_text += guidance
+                
+        return response_text
+                
     def process_query(self, query, use_query_expansion, filters, history):
         """Process the user query and return the response with optional filters."""
         logger.info(f"Processing query: {query}")
@@ -616,6 +631,7 @@ class AdvancedHotelRecommendationUI:
                 response_text += "\n\n" + expanded_queries_html
             
             # Return the response text, map, and charts
+            response_text = self.enhance_response_message(response_text, all_hotels)
             return response_text, map_path, feature_chart_path, sentiment_chart_path, all_hotels
         
         except Exception as e:
@@ -632,15 +648,21 @@ class AdvancedHotelRecommendationUI:
             gr.Markdown("""
                 Enter your hotel preferences in natural language, and I'll recommend hotels based on reviews and features.
                 
+                **Currently supporting hotels in major US cities only**, including:
+                - New York, Manhattan, Brooklyn 
+                - Los Angeles, San Francisco
+                - Las Vegas, Miami, Chicago
+                - Houston, Dallas, Washington DC
+                
                 The system uses advanced search features:
                 - **Hybrid Search**: Combines semantic and keyword search for better results
                 - **Query Expansion**: Automatically expands your query with synonyms and related terms
                 - **Dynamic Filtering**: Filters hotels based on features mentioned in your query
                 
                 Example queries:
-                - "I need a hotel in Paris with free breakfast, under $200 per night, and good for families."
-                - "Find me a luxury hotel in New York with excellent reviews about its spa facilities."
-                - "What are the best boutique hotels in Barcelona with rooftop views?"
+                - "I need a hotel in Manhattan with free breakfast, under $200 per night, and good for families."
+                - "Find me a luxury hotel in Las Vegas with excellent reviews about its spa facilities."
+                - "What are the best boutique hotels in Chicago with city views?"
             """)
             
             # State for storing all hotels
@@ -891,16 +913,16 @@ class AdvancedHotelRecommendationUI:
             with gr.Accordion("Example Queries", open=False):
                 examples = gr.Examples(
                     examples=[
-                        "I need a luxury hotel in Paris with a good spa and breakfast included.",
-                        "Find me a budget-friendly hotel in London near the city center with good reviews.",
+                        "I need a luxury hotel in Manhattan with a good spa and breakfast included.",
+                        "Find me a budget-friendly hotel in Chicago near the city center with good reviews.",
                         "What are the best family-friendly hotels in New York with pool facilities?",
                         "I want a beachfront hotel in Miami with high ratings for cleanliness.",
-                        "Recommend me a boutique hotel in Rome with good location and breakfast.",
-                        "Looking for a hotel with excellent service in Tokyo for a business trip.",
-                        "I need a quiet hotel in Barcelona with a rooftop bar and city views.",
-                        "Where can I find a romantic hotel in Venice with canal views?",
+                        "Recommend me a boutique hotel in Washington DC with good location and breakfast.",
+                        "Looking for a hotel with excellent service in Houston for a business trip.",
+                        "I need a quiet hotel in San Francisco with a rooftop bar and city views.",
+                        "Where can I find a romantic hotel in New Orleans with river views?",
                         "Suggest a hotel in Las Vegas with a casino and multiple restaurants.",
-                        "I want a ski resort in Whistler with a fireplace in the room."
+                        "I want a ski resort near Denver with a fireplace in the room."
                     ],
                     inputs=msg
                 )

@@ -14,7 +14,11 @@ from chromadb.utils import embedding_functions
 from typing import List, Dict, Any, Tuple, Optional, Union
 import numpy as np
 import pandas as pd
+import time
 from llama_index.core.indices.vector_store.base import VectorStoreIndex # Correct import
+
+# Import debug utilities
+from .debug_utils import debug_log, QueryDebugger
 from llama_index.core import VectorStoreIndex, Settings, StorageContext
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -29,12 +33,23 @@ from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 import nltk
 
+# Import debug utilities
+from .debug_utils import debug_log, QueryDebugger
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Enable more detailed debugging
+DEBUG_MODE = True
+
+def debug_log(message, level=logging.INFO):
+    """Log debug messages only if DEBUG_MODE is enabled."""
+    if DEBUG_MODE:
+        logger.log(level, message)
 
 # Download NLTK resources
 def download_nltk_resources():
@@ -52,31 +67,37 @@ Focus on aspects like location, amenities, price range, and traveler types."""
 
 QUERY_PROMPT_TEMPLATE = """
 You are an expert hotel recommendation system. Based on the user's preferences, 
-you need to recommend hotels that match their criteria. 
-Provide detailed explanations of why each hotel is a good match.
+you need to recommend hotels that match their criteria.
+
+IMPORTANT: Always format your response according to the exact structure below.
 
 User preferences: {query_str}
 
 Using the following hotel information, suggest up to 5 hotels that best match the user's needs.
-For each hotel, explain why it's a good match, mentioning specific features from the reviews.
-If location is mentioned, prioritize hotels in that location.
-If specific amenities are requested, highlight those amenities in the recommendations.
-If price range is specified, recommend hotels within that range.
 
-Context information from hotel reviews and data:
+Context information:
 {context_str}
 
-Format your response as follows:
+Your response MUST follow this EXACT format for EACH hotel:
+
 1. [Hotel Name] - [Location]
-   Rating: [Average Score]
+   Rating: [Average Score]/5
    Why it's a match: [Explanation with specific details from reviews]
    Key features: [List 3-5 key features from the reviews]
 
 2. [Next Hotel]
    ...
 
+Example format:
+1. Grand Hotel - Downtown NYC
+   Rating: 4.5/5
+   Why it's a match: This hotel perfectly matches your desire for a central location with excellent dining options. Reviewers consistently praise the spacious rooms and attentive staff.
+   Key features: Central location, Rooftop restaurant, Spa services, Free breakfast, Pet-friendly
+
 If you can't find suitable hotels that match all criteria, explain what criteria
 you were able to match and suggest alternatives.
+
+FOLLOW THIS FORMAT EXACTLY. DO NOT DEVIATE FROM THIS STRUCTURE.
 """
 
 class QueryExpander:
@@ -318,13 +339,48 @@ class QueryExpander:
         return features
     
     def _extract_locations(self, query_text: str) -> List[str]:
-        """Extract location names from the query."""
+        """Extract location names from the query with improved handling."""
         locations = []
         query_lower = query_text.lower()
         
-        for location in self.locations:
+        # Common international city names that we don't support but users might ask for
+        common_international_cities = [
+            "london", "paris", "rome", "barcelona", "madrid", "berlin", "amsterdam",
+            "tokyo", "beijing", "shanghai", "hong kong", "singapore", "sydney",
+            "melbourne", "dubai", "toronto", "vancouver", "montreal", "mexico city",
+            "cancun", "rio de janeiro", "sao paulo", "bangkok", "seoul", "milan",
+            "vienna", "prague", "istanbul", "athens", "cairo", "cape town"
+        ]
+        
+        # Check for international cities first (cities we don't support)
+        for location in common_international_cities:
             if location in query_lower:
                 locations.append(location)
+        
+        # Check for supported US locations if no international city was found
+        if not locations:
+            for location in self.locations:
+                if location in query_lower:
+                    locations.append(location)
+        
+        # Check for general US states if no specific city was found
+        if not locations:
+            us_states = [
+                "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+                "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+                "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+                "maine", "maryland", "massachusetts", "michigan", "minnesota",
+                "mississippi", "missouri", "montana", "nebraska", "nevada",
+                "new hampshire", "new jersey", "new mexico", "new york", "north carolina",
+                "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania",
+                "rhode island", "south carolina", "south dakota", "tennessee", "texas",
+                "utah", "vermont", "virginia", "washington", "west virginia",
+                "wisconsin", "wyoming"
+            ]
+            
+            for state in us_states:
+                if state in query_lower:
+                    locations.append(state)
         
         return locations
     
@@ -424,6 +480,17 @@ class AdvancedRAGEngine:
         self.embedding_model = embedding_model
         self.llm_model = llm_model
         
+        # Location keywords
+        self.locations = [
+            "new york", "manhattan", "brooklyn", "queens", "bronx", "staten island",
+            "las vegas", "london", "paris", "tokyo", "rome", "barcelona", 
+            "dubai", "sydney", "hong kong", "berlin", "amsterdam", "madrid", "singapore", 
+            "bangkok", "istanbul", "prague", "vienna", "venice", "florence", "miami",
+            "san francisco", "los angeles", "chicago", "toronto", "vancouver", "montreal",
+            "houston", "dallas", "washington", "boston", "philadelphia", "austin",
+            "san diego", "seattle", "portland", "denver", "phoenix", "atlanta"
+        ]
+        
         # Check if the chroma_db directory exists
         if not os.path.exists(chroma_db_dir):
             raise FileNotFoundError(
@@ -436,6 +503,17 @@ class AdvancedRAGEngine:
         
         # Initialize the RAG components
         self.setup_rag_components()
+    
+    def _extract_locations(self, query_text: str) -> List[str]:
+        """Extract location names from the query."""
+        locations = []
+        query_lower = query_text.lower()
+        
+        for location in self.locations:
+            if location in query_lower:
+                locations.append(location)
+        
+        return locations
     
     def setup_rag_components(self):
         """Set up the RAG components."""
@@ -533,12 +611,67 @@ class AdvancedRAGEngine:
     def query(self, user_query: str, use_query_expansion: bool = True, filters: Dict[str, Any] = None) -> Dict[str, Any]:
         """Run an enhanced query against the RAG engine with optional explicit filters."""
         logger.info(f"Running query: {user_query}")
+        start_time = time.time()
+        
+        # Define supported locations
+        supported_locations = [
+            "new york", "manhattan", "brooklyn", "queens", "bronx", "staten island",
+            "los angeles", "houston", "chicago", "miami", "las vegas", "san francisco",
+            "boston", "seattle", "washington", "washington dc", "atlanta", "dallas",
+            "philadelphia", "san diego", "austin", "denver", "phoenix", "orlando",
+            "new orleans", "portland", "nashville", "san antonio", "baltimore"
+        ]
+        
+        # Extract locations from the query
+        detected_locations = self._extract_locations(user_query.lower())
+        logger.info(f"Detected locations: {detected_locations}")
+        
+        # Check if any detected locations are not supported
+        unsupported_locations = []
+        for loc in detected_locations:
+            if not any(loc in supp_loc or supp_loc in loc for supp_loc in supported_locations):
+                unsupported_locations.append(loc)
+        
+        # If unsupported locations are detected, return an informative message
+        if unsupported_locations:
+            logger.info(f"Unsupported locations detected: {unsupported_locations}")
+            response_message = f"I'm sorry, but I don't have information about hotels in {', '.join(unsupported_locations)}. "
+            response_message += "Currently, I only have data for hotels in select U.S. cities including New York, Los Angeles, "
+            response_message += "Houston, Chicago, Miami, Las Vegas, and other major US cities. "
+            response_message += "Would you like recommendations for any of these locations instead?"
+            
+            return {
+                'response': response_message,
+                'hotels': [],
+                'all_hotels': [],
+                'expanded_queries': [user_query],
+                'filter_stats': None
+            }
         
         # If the hybrid retriever is None (fallback mode), use the regular query engine
         if self.hybrid_retriever is None:
             logger.info("Using vector retriever only (hybrid retrieval not available)")
+            
+            # Track time for vector retrieval
+            retrieval_start = time.time()
+            logger.info("Starting vector retrieval...")
             response = self.query_engine.query(user_query)
             source_nodes = response.source_nodes
+            retrieval_time = time.time() - retrieval_start
+            logger.info(f"Vector retrieval completed in {retrieval_time:.2f} seconds, found {len(source_nodes)} documents")
+            
+            # Log information about retrieved documents
+            if source_nodes:
+                logger.info("Top retrieved documents:")
+                for i, node in enumerate(source_nodes[:3]):  # Log top 3 for brevity
+                    if hasattr(node, 'metadata') and node.metadata:
+                        hotel_name = node.metadata.get('Hotel_Name', 'Unknown')
+                        score = node.score if hasattr(node, 'score') else 'N/A'
+                        logger.info(f"  [{i+1}] {hotel_name} (score: {score})")
+                        # Log a snippet of the content
+                        if hasattr(node, 'text') and node.text:
+                            content_preview = node.text[:100] + "..." if len(node.text) > 100 else node.text
+                            logger.info(f"      Preview: {content_preview}")
             
             # Skip the query expansion since we're in fallback mode
             expanded_queries = [user_query]
@@ -547,6 +680,10 @@ class AdvancedRAGEngine:
             expanded_queries = self.expand_query(user_query)
             logger.info(f"Expanded queries: {expanded_queries}")
             
+            # Track time for initial retrieval
+            retrieval_start = time.time()
+            logger.info("Starting retrieval with original query...")
+            
             # Use the original query as the main query
             response = self.query_engine.query(user_query)
             
@@ -554,30 +691,43 @@ class AdvancedRAGEngine:
             source_nodes = response.source_nodes
             seen_hotels = set()
             
+            retrieval_time = time.time() - retrieval_start
+            logger.info(f"Initial retrieval completed in {retrieval_time:.2f} seconds, found {len(source_nodes)} documents")
+            
             # Process additional expanded queries if we don't have enough results
             if len(source_nodes) < 10:
+                logger.info(f"Not enough results ({len(source_nodes)}), trying expanded queries...")
                 for exp_query in expanded_queries[:3]:  # Limit to first 3 expansions
                     if exp_query == user_query:
                         continue
                     
                     # Run the expanded query
+                    logger.info(f"Trying expanded query: {exp_query}")
+                    exp_retrieval_start = time.time()
                     exp_response = self.query_engine.query(exp_query)
                     exp_nodes = exp_response.source_nodes
+                    exp_retrieval_time = time.time() - exp_retrieval_start
+                    logger.info(f"Expanded query retrieval completed in {exp_retrieval_time:.2f} seconds, found {len(exp_nodes)} documents")
                     
                     # Add unique hotels to results
+                    added = 0
                     for node in exp_nodes:
                         if hasattr(node, 'metadata') and node.metadata:
                             hotel_name = node.metadata.get('Hotel_Name', '')
                             if hotel_name and hotel_name not in seen_hotels:
                                 source_nodes.append(node)
                                 seen_hotels.add(hotel_name)
+                                added += 1
                                 
                                 # Stop if we have enough results
                                 if len(source_nodes) >= 15:
                                     break
                     
+                    logger.info(f"Added {added} unique hotels from expanded query")
+                    
                     # Stop if we have enough results
                     if len(source_nodes) >= 15:
+                        logger.info("Reached target number of results, stopping expansion")
                         break
         else:
             # Use only the original query
@@ -607,6 +757,20 @@ class AdvancedRAGEngine:
                     }
                 })
         
+        # If no hotels were found, return an appropriate message
+        if not hotels_info:
+            logger.info("No hotels found matching the query criteria")
+            response_message = "I couldn't find any hotels matching your specific criteria. "
+            response_message += "Please try broadening your search or specifying different amenities or locations. "
+            response_message += "Currently, the system has data primarily for major US cities."
+            
+            return {
+                'response': response_message,
+                'hotels': [],
+                'all_hotels': [],
+                'expanded_queries': expanded_queries if use_query_expansion else [user_query],
+                'filter_stats': None
+            }        
         # Apply explicit filters if provided
         if filters:
             filtered_hotels = []
