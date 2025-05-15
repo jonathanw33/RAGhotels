@@ -763,8 +763,31 @@ class AdvancedHotelRecommendationUI:
                 
                 return filters
             
-            def bot(history, use_expansion, min_rating, min_sentiment, sort_by, **kwargs):
-                """Handle bot responses with filters."""
+            def bot(*args):
+                """Handle bot responses with filters.
+                
+                The function can accept a variable number of arguments:
+                - First argument is history
+                - Second argument is use_expansion
+                - Third argument is min_rating
+                - Fourth argument is min_sentiment
+                - Fifth argument is sort_by
+                - Rest are feature checkboxes
+                """
+                # Extract the fixed arguments
+                history = args[0]
+                use_expansion = args[1]
+                min_rating = args[2]
+                min_sentiment = args[3]
+                sort_by = args[4]
+                
+                # Build kwargs dictionary for remaining arguments (feature checkboxes)
+                kwargs = {}
+                if len(args) > 5:
+                    for i, feature in enumerate(self.common_features):
+                        if 5 + i < len(args):
+                            kwargs[f"feature_{feature}"] = args[5 + i]
+                
                 message = history[-1][0]
                 
                 # Collect all filters
